@@ -24,25 +24,27 @@ var swiftDriverConstructor func(prefix string) (*Driver, error)
 
 func init() {
 	var (
-		username           string
-		password           string
-		authURL            string
-		tenant             string
-		tenantID           string
-		domain             string
-		domainID           string
-		tenantDomain       string
-		tenantDomainID     string
-		trustID            string
-		container          string
-		region             string
-		AuthVersion        int
-		endpointType       string
-		insecureSkipVerify bool
-		secretKey          string
-		accessKey          string
-		containerKey       bool
-		tempURLMethods     []string
+		username                      string
+		password                      string
+		authURL                       string
+		tenant                        string
+		tenantID                      string
+		domain                        string
+		domainID                      string
+		tenantDomain                  string
+		tenantDomainID                string
+		trustID                       string
+		container                     string
+		region                        string
+		AuthVersion                   int
+		endpointType                  string
+		insecureSkipVerify            bool
+		secretKey                     string
+		accessKey                     string
+		containerKey                  bool
+		tempURLMethods                []string
+		consistencyTimeout            int
+		maxConsistentyPollingInterval int
 
 		swiftServer *swifttest.SwiftServer
 		err         error
@@ -106,6 +108,8 @@ func init() {
 			accessKey,
 			containerKey,
 			tempURLMethods,
+			consistencyTimeout,
+			maxConsistentyPollingInterval,
 		}
 
 		return New(parameters)

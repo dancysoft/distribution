@@ -147,7 +147,7 @@ func (c *Connection) getAllSLOSegments(container, path string) (string, []Object
 	values := url.Values{}
 	values.Set("multipart-manifest", "get")
 
-	file, _, err := c.objectOpen(container, path, true, nil, values)
+	file, _, err := c.objectOpen(container, path, true, nil, values, false)
 	if err != nil {
 		return "", nil, err
 	}

@@ -283,6 +283,9 @@ func withLORetry(expectedSize int64, fn func() (Headers, int64, error)) (err err
 		var headers Headers
 		var sz int64
 		if headers, sz, err = fn(); err == nil {
+			// if expectedSize is 0, we're happy if the actual size is >= 0 (i.e, the object exists).
+			// but if the object doesn't exist, presumably fn() would have returned an error so it's unclear
+			// what value withLORetry has when expectedSize is 0.
 			if !headers.IsLargeObjectDLO() || (expectedSize == 0 && sz > 0) || expectedSize == sz {
 				return
 			}
@@ -366,7 +369,7 @@ func (file *largeObjectCreateFile) writeSegment(buf []byte, writeSegmentIdx int,
 		if relativeFilePos > 0 {
 			headers := make(Headers)
 			headers["Range"] = "bytes=0-" + strconv.FormatInt(int64(relativeFilePos-1), 10)
-			existingSegmentReader, _, err := file.conn.ObjectOpen(file.segmentContainer, segmentName, true, headers)
+			existingSegmentReader, _, err := file.conn.ObjectOpen(file.segmentContainer, segmentName, true, headers, false)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -384,7 +387,7 @@ func (file *largeObjectCreateFile) writeSegment(buf []byte, writeSegmentIdx int,
 	if existingSegment != nil && segmentSize < int(existingSegment.Bytes) {
 		headers := make(Headers)
 		headers["Range"] = "bytes=" + strconv.FormatInt(int64(segmentSize), 10) + "-"
-		tailSegmentReader, _, err := file.conn.ObjectOpen(file.segmentContainer, segmentName, true, headers)
+		tailSegmentReader, _, err := file.conn.ObjectOpen(file.segmentContainer, segmentName, true, headers, false)
 		if err != nil {
 			return nil, 0, err
 		}

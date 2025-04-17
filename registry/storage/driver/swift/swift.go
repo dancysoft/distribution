@@ -34,6 +34,7 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/ncw/swift"
+	"github.com/sirupsen/logrus"
 
 	storagedriver "github.com/docker/distribution/registry/storage/driver"
 	"github.com/docker/distribution/registry/storage/driver/base"
@@ -52,35 +53,34 @@ const minChunkSize = 1 << 20
 // contentType defines the Content-Type header associated with stored segments
 const contentType = "application/octet-stream"
 
-// readAfterWriteTimeout defines the time we wait before an object appears after having been uploaded
-var readAfterWriteTimeout = 15 * time.Second
-
-// readAfterWriteWait defines the time to sleep between two retries
-var readAfterWriteWait = 200 * time.Millisecond
+// initialConsistencyWait defines the initial time to sleep between consistency retries
+var initialConsistencyWait = 200 * time.Millisecond
 
 // Parameters A struct that encapsulates all of the driver parameters after all values have been set
 type Parameters struct {
-	Username            string
-	Password            string
-	AuthURL             string
-	Tenant              string
-	TenantID            string
-	Domain              string
-	DomainID            string
-	TenantDomain        string
-	TenantDomainID      string
-	TrustID             string
-	Region              string
-	AuthVersion         int
-	Container           string
-	Prefix              string
-	EndpointType        string
-	InsecureSkipVerify  bool
-	ChunkSize           int
-	SecretKey           string
-	AccessKey           string
-	TempURLContainerKey bool
-	TempURLMethods      []string
+	Username                      string
+	Password                      string
+	AuthURL                       string
+	Tenant                        string
+	TenantID                      string
+	Domain                        string
+	DomainID                      string
+	TenantDomain                  string
+	TenantDomainID                string
+	TrustID                       string
+	Region                        string
+	AuthVersion                   int
+	Container                     string
+	Prefix                        string
+	EndpointType                  string
+	InsecureSkipVerify            bool
+	ChunkSize                     int
+	SecretKey                     string
+	AccessKey                     string
+	TempURLContainerKey           bool
+	TempURLMethods                []string
+	ConsistencyTimeout            int
+	MaxConsistentyPollingInterval int
 }
 
 // swiftInfo maps the JSON structure returned by Swift /info endpoint
@@ -108,16 +108,18 @@ func (factory *swiftDriverFactory) Create(parameters map[string]interface{}) (st
 }
 
 type driver struct {
-	Conn                 *swift.Connection
-	Container            string
-	Prefix               string
-	BulkDeleteSupport    bool
-	BulkDeleteMaxDeletes int
-	ChunkSize            int
-	SecretKey            string
-	AccessKey            string
-	TempURLContainerKey  bool
-	TempURLMethods       []string
+	Conn                          *swift.Connection
+	Container                     string
+	Prefix                        string
+	BulkDeleteSupport             bool
+	BulkDeleteMaxDeletes          int
+	ChunkSize                     int
+	SecretKey                     string
+	AccessKey                     string
+	TempURLContainerKey           bool
+	TempURLMethods                []string
+	ConsistencyTimeout            time.Duration
+	MaxConsistencyPollingInterval time.Duration
 }
 
 type baseEmbed struct {
@@ -222,13 +224,24 @@ func New(params Parameters) (*Driver, error) {
 		return nil, fmt.Errorf("failed to retrieve info about container %s (%s)", params.Container, err)
 	}
 
+	consistencyTimeout := time.Duration(15) * time.Second
+	if params.ConsistencyTimeout > 0 {
+		consistencyTimeout = time.Duration(params.ConsistencyTimeout) * time.Second
+	}
+	maxConsistencyPollingInterval := time.Duration(10) * time.Second
+	if params.MaxConsistentyPollingInterval > 0 {
+		maxConsistencyPollingInterval = time.Duration(params.MaxConsistentyPollingInterval) * time.Second
+	}
+
 	d := &driver{
-		Conn:           ct,
-		Container:      params.Container,
-		Prefix:         params.Prefix,
-		ChunkSize:      params.ChunkSize,
-		TempURLMethods: make([]string, 0),
-		AccessKey:      params.AccessKey,
+		Conn:                          ct,
+		Container:                     params.Container,
+		Prefix:                        params.Prefix,
+		ChunkSize:                     params.ChunkSize,
+		TempURLMethods:                make([]string, 0),
+		AccessKey:                     params.AccessKey,
+		ConsistencyTimeout:            consistencyTimeout,
+		MaxConsistencyPollingInterval: maxConsistencyPollingInterval,
 	}
 
 	info := swiftInfo{}
@@ -304,7 +317,7 @@ func (d *driver) Name() string {
 
 // GetContent retrieves the content stored at "path" as a []byte.
 func (d *driver) GetContent(ctx context.Context, path string) ([]byte, error) {
-	content, err := d.Conn.ObjectGetBytes(d.Container, d.swiftPath(path))
+	content, err := d.Conn.ObjectGetBytes(d.Container, d.swiftPath(path), true)
 	if err == swift.ObjectNotFound {
 		return nil, storagedriver.PathNotFoundError{Path: path}
 	}
@@ -320,17 +333,81 @@ func (d *driver) PutContent(ctx context.Context, path string, contents []byte) e
 	return err
 }
 
+func blobIsConsistent(headers swift.Headers, size int64) (bool, error) {
+	_, isDLO := headers["X-Object-Manifest"]
+	if !isDLO {
+		//if this is not a DLO, then we're good to go
+		return true, nil
+	}
+
+	if state, haveState := headers["X-Object-Meta-Registry-State"]; haveState {
+		if state == "Final" {
+			finalSizeString := headers["X-Object-Meta-Registry-Final-Size"]
+			finalSize, err := strconv.ParseInt(finalSizeString, 10, 64)
+			if err != nil {
+				return false, fmt.Errorf("bad X-Object-Meta-Registry-Final-Size header: '%s'", finalSizeString)
+			}
+
+			if size == finalSize {
+				// Consistency reached!
+				return true, nil
+			}
+		}
+	} else {
+		// Fall back to the original (unsafe) logic which assumes that the DLO is good to go as soon
+		// as it has nonzero size.
+		if size != 0 {
+			return true, nil
+		}
+	}
+
+	// Not consistent yet
+	return false, nil
+}
+
+type sleeper struct {
+	operation          string
+	path               string
+	endTime            time.Time
+	pollingInterval    time.Duration
+	maxPollingInterval time.Duration
+}
+
+func newSleeper(operation string, path string, timeout time.Duration, maxPollingInterval time.Duration) *sleeper {
+	return &sleeper{
+		operation:          operation,
+		path:               path,
+		endTime:            time.Now().Add(timeout),
+		pollingInterval:    initialConsistencyWait,
+		maxPollingInterval: maxPollingInterval,
+	}
+}
+
+func (s *sleeper) Sleep() error {
+	if time.Now().Add(s.pollingInterval).After(s.endTime) {
+		return fmt.Errorf("%s: timeout expired while waiting for %s to reach consistency",
+			s.operation, s.path)
+	}
+	logrus.Infof("%s: sleeping for %s while waiting for %s to reach consistency",
+		s.operation, s.pollingInterval, s.path)
+	time.Sleep(s.pollingInterval)
+	s.pollingInterval *= 2
+	if s.pollingInterval > s.maxPollingInterval {
+		s.pollingInterval = s.maxPollingInterval
+	}
+	return nil
+}
+
 // Reader retrieves an io.ReadCloser for the content stored at "path" with a
 // given byte offset.
 func (d *driver) Reader(ctx context.Context, path string, offset int64) (io.ReadCloser, error) {
 	headers := make(swift.Headers)
 	headers["Range"] = "bytes=" + strconv.FormatInt(offset, 10) + "-"
 
-	waitingTime := readAfterWriteWait
-	endTime := time.Now().Add(readAfterWriteTimeout)
+	sleeper := newSleeper("Reader", path, d.ConsistencyTimeout, d.MaxConsistencyPollingInterval)
 
 	for {
-		file, headers, err := d.Conn.ObjectOpen(d.Container, d.swiftPath(path), false, headers)
+		file, headers, err := d.Conn.ObjectOpen(d.Container, d.swiftPath(path), false, headers, false)
 		if err != nil {
 			if err == swift.ObjectNotFound {
 				return nil, storagedriver.PathNotFoundError{Path: path}
@@ -341,24 +418,25 @@ func (d *driver) Reader(ctx context.Context, path string, offset int64) (io.Read
 			return file, err
 		}
 
-		//if this is a DLO and it is clear that segments are still missing,
-		//wait until they show up
-		_, isDLO := headers["X-Object-Manifest"]
 		size, err := file.Length()
 		if err != nil {
 			return file, err
 		}
-		if isDLO && size == 0 {
-			if time.Now().Add(waitingTime).After(endTime) {
-				return nil, fmt.Errorf("timeout expired while waiting for segments of %s to show up", path)
-			}
-			time.Sleep(waitingTime)
-			waitingTime *= 2
-			continue
+		consistent, err := blobIsConsistent(headers, size)
+		if err != nil {
+			return file, err
+		}
+		if consistent {
+			return file, nil
 		}
 
-		//if not, then this reader will be fine
-		return file, nil
+		// If we reach here, we're dealing with a DLO that is not yet consistent.
+		// It's also possible that the DLO is truly mid-upload (in which case, why is something trying to read it?).
+		// Anyway, wait a bit and retry.
+		err = sleeper.Sleep()
+		if err != nil {
+			return nil, err
+		}
 	}
 }
 
@@ -404,6 +482,34 @@ func (d *driver) Writer(ctx context.Context, path string, append bool) (storaged
 	return d.newWriter(path, segmentsPath, segments), nil
 }
 
+func (d *driver) getObjectInfo(operation string, path string) (info swift.Object, headers swift.Headers, err error) {
+	sleeper := newSleeper(operation, path, d.ConsistencyTimeout, d.MaxConsistencyPollingInterval)
+
+	for {
+		info, headers, err = d.Conn.Object(d.Container, path)
+		if err != nil {
+			if err == swift.ObjectNotFound {
+				return info, headers, storagedriver.PathNotFoundError{Path: path}
+			}
+			return
+		}
+
+		consistent, err := blobIsConsistent(headers, info.Bytes)
+		if err != nil {
+			return info, headers, err
+		}
+		if consistent {
+			return info, headers, nil
+		}
+
+		// Not consistent yet
+		err = sleeper.Sleep()
+		if err != nil {
+			return info, headers, err
+		}
+	}
+}
+
 // Stat retrieves the FileInfo for the given path, including the current size
 // in bytes and the creation time.
 func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
@@ -439,36 +545,15 @@ func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo,
 	//Don't trust an empty `objects` slice. A container listing can be
 	//outdated. For files, we can make a HEAD request on the object which
 	//reports existence (at least) much more reliably.
-	waitingTime := readAfterWriteWait
-	endTime := time.Now().Add(readAfterWriteTimeout)
-
-	for {
-		info, headers, err := d.Conn.Object(d.Container, swiftPath)
-		if err != nil {
-			if err == swift.ObjectNotFound {
-				return nil, storagedriver.PathNotFoundError{Path: path}
-			}
-			return nil, err
-		}
-
-		//if this is a DLO and it is clear that segments are still missing,
-		//wait until they show up
-		_, isDLO := headers["X-Object-Manifest"]
-		if isDLO && info.Bytes == 0 {
-			if time.Now().Add(waitingTime).After(endTime) {
-				return nil, fmt.Errorf("timeout expired while waiting for segments of %s to show up", path)
-			}
-			time.Sleep(waitingTime)
-			waitingTime *= 2
-			continue
-		}
-
-		//otherwise, accept the result
-		fi.IsDir = false
-		fi.Size = info.Bytes
-		fi.ModTime = info.LastModified
-		return storagedriver.FileInfoInternal{FileInfoFields: fi}, nil
+	info, _, err := d.getObjectInfo("Stat", swiftPath)
+	if err != nil {
+		return nil, err
 	}
+	fi.IsDir = false
+	fi.Size = info.Bytes
+	fi.ModTime = info.LastModified
+
+	return storagedriver.FileInfoInternal{FileInfoFields: fi}, nil
 }
 
 // List returns a list of the objects that are direct descendants of the given path.
@@ -499,10 +584,10 @@ func (d *driver) List(ctx context.Context, path string) ([]string, error) {
 // Move moves an object stored at sourcePath to destPath, removing the original
 // object.
 func (d *driver) Move(ctx context.Context, sourcePath string, destPath string) error {
-	_, headers, err := d.Conn.Object(d.Container, d.swiftPath(sourcePath))
+	object, headers, err := d.getObjectInfo("Move", d.swiftPath(sourcePath))
 	if err == nil {
 		if manifest, ok := headers["X-Object-Manifest"]; ok {
-			if err = d.createManifest(destPath, manifest); err != nil {
+			if err = d.createManifest(destPath, manifest, true, object.Bytes); err != nil {
 				return err
 			}
 			err = d.Conn.ObjectDelete(d.Container, d.swiftPath(sourcePath))
@@ -726,9 +811,19 @@ func (d *driver) getAllSegments(path string) ([]swift.Object, error) {
 	}
 }
 
-func (d *driver) createManifest(path string, segments string) error {
+// used during Move
+// used during uncancelled, uncommited close
+// used during commit
+func (d *driver) createManifest(path string, segments string, final bool, finalSize int64) error {
 	headers := make(swift.Headers)
 	headers["X-Object-Manifest"] = segments
+	if final {
+		headers["X-Object-Meta-Registry-State"] = "Final"
+		headers["X-Object-Meta-Registry-Final-Size"] = strconv.FormatInt(finalSize, 10)
+	} else {
+		headers["X-Object-Meta-Registry-State"] = "Uploading"
+	}
+
 	manifest, err := d.Conn.ObjectCreate(d.Container, d.swiftPath(path), false, "", contentType, headers)
 	if err != nil {
 		if err == swift.ObjectNotFound {
@@ -840,10 +935,7 @@ func (w *writer) Close() error {
 	}
 
 	if !w.committed && !w.cancelled {
-		if err := w.driver.createManifest(w.path, w.driver.Container+"/"+w.segmentsPath); err != nil {
-			return err
-		}
-		if err := w.waitForSegmentsToShowUp(); err != nil {
+		if err := w.driver.createManifest(w.path, w.driver.Container+"/"+w.segmentsPath, false, 0); err != nil {
 			return err
 		}
 	}
@@ -875,45 +967,25 @@ func (w *writer) Commit() error {
 		return err
 	}
 
-	if err := w.driver.createManifest(w.path, w.driver.Container+"/"+w.segmentsPath); err != nil {
+	// We trust w.size here because blobUploadDispatcher has already validated that the uploader and
+	// the backing DLO are in sync (in terms of size)
+	if err := w.driver.createManifest(w.path, w.driver.Container+"/"+w.segmentsPath, true, w.size); err != nil {
 		return err
 	}
 
 	w.committed = true
-	return w.waitForSegmentsToShowUp()
-}
-
-func (w *writer) waitForSegmentsToShowUp() error {
-	var err error
-	waitingTime := readAfterWriteWait
-	endTime := time.Now().Add(readAfterWriteTimeout)
-
-	for {
-		var info swift.Object
-		if info, _, err = w.driver.Conn.Object(w.driver.Container, w.driver.swiftPath(w.path)); err == nil {
-			if info.Bytes == w.size {
-				break
-			}
-			err = fmt.Errorf("timeout expired while waiting for segments of %s to show up", w.path)
-		}
-		if time.Now().Add(waitingTime).After(endTime) {
-			break
-		}
-		time.Sleep(waitingTime)
-		waitingTime *= 2
-	}
-
-	return err
+	return nil
 }
 
 type segmentWriter struct {
 	conn          *swift.Connection
 	container     string
 	segmentsPath  string
-	segmentNumber int
+	segmentNumber int // The first segment is numbered 1
 	maxChunkSize  int
 }
 
+// Each write to the segmentWriter will create one or more new segment objects in Swift.
 func (sw *segmentWriter) Write(p []byte) (int, error) {
 	n := 0
 	for offset := 0; offset < len(p); offset += sw.maxChunkSize {

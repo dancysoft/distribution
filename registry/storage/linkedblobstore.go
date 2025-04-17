@@ -148,6 +148,7 @@ func (lbs *linkedBlobStore) Create(ctx context.Context, options ...distribution.
 	uuid := uuid.Generate().String()
 	startedAt := time.Now().UTC()
 
+	// ..../<name>/_uploads/<id>/data
 	path, err := pathFor(uploadDataPathSpec{
 		name: lbs.repository.Named().Name(),
 		id:   uuid,

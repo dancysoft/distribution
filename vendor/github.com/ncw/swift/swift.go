@@ -1605,7 +1605,7 @@ func (file *ObjectOpenFile) Seek(offset int64, whence int) (newPos int64, err er
 	} else {
 		delete(file.headers, "Range")
 	}
-	newFile, _, err := file.connection.ObjectOpen(file.container, file.objectName, false, file.headers)
+	newFile, _, err := file.connection.ObjectOpen(file.container, file.objectName, false, file.headers, false)
 	if err != nil {
 		return
 	}
@@ -1702,7 +1702,23 @@ func (c *Connection) objectOpenBase(container string, objectName string, checkHa
 	return
 }
 
-func (c *Connection) objectOpen(container string, objectName string, checkHash bool, h Headers, parameters url.Values) (file *ObjectOpenFile, headers Headers, err error) {
+func (c *Connection) objectOpen(container string, objectName string, checkHash bool, h Headers, parameters url.Values, newest bool) (file *ObjectOpenFile, headers Headers, err error) {
+	if newest {
+		if h == nil {
+			h = Headers{}
+		} else {
+			// Make a copy of the supplied headers so that we can add an entry
+			newH := map[string]string{}
+			for k, v := range h {
+				newH[k] = v
+			}
+			h = newH
+		}
+
+		// https://docs.openstack.org/api-ref/object-store/index.html#objects:~:text=for%20more%20information.-,X%2DNewest,-(Optional)
+		h["X-Newest"] = "true"
+	}
+
 	err = withLORetry(0, func() (Headers, int64, error) {
 		file, headers, err = c.objectOpenBase(container, objectName, checkHash, h, parameters)
 		if err != nil {
@@ -1736,8 +1752,8 @@ func (c *Connection) objectOpen(container string, objectName string, checkHash b
 // you will need to download everything in the manifest separately.
 //
 // headers["Content-Type"] will give the content type if desired.
-func (c *Connection) ObjectOpen(container string, objectName string, checkHash bool, h Headers) (file *ObjectOpenFile, headers Headers, err error) {
-	return c.objectOpen(container, objectName, checkHash, h, nil)
+func (c *Connection) ObjectOpen(container string, objectName string, checkHash bool, h Headers, newest bool) (file *ObjectOpenFile, headers Headers, err error) {
+	return c.objectOpen(container, objectName, checkHash, h, nil, newest)
 }
 
 // ObjectGet gets the object into the io.Writer contents.
@@ -1749,8 +1765,8 @@ func (c *Connection) ObjectOpen(container string, objectName string, checkHash b
 // server.  If it is wrong then it will return ObjectCorrupted.
 //
 // headers["Content-Type"] will give the content type if desired.
-func (c *Connection) ObjectGet(container string, objectName string, contents io.Writer, checkHash bool, h Headers) (headers Headers, err error) {
-	file, headers, err := c.ObjectOpen(container, objectName, checkHash, h)
+func (c *Connection) ObjectGet(container string, objectName string, contents io.Writer, checkHash bool, h Headers, newest bool) (headers Headers, err error) {
+	file, headers, err := c.ObjectOpen(container, objectName, checkHash, h, newest)
 	if err != nil {
 		return
 	}
@@ -1762,9 +1778,9 @@ func (c *Connection) ObjectGet(container string, objectName string, contents io.
 // ObjectGetBytes returns an object as a []byte.
 //
 // This is a simplified interface which checks the MD5
-func (c *Connection) ObjectGetBytes(container string, objectName string) (contents []byte, err error) {
+func (c *Connection) ObjectGetBytes(container string, objectName string, newest bool) (contents []byte, err error) {
 	var buf bytes.Buffer
-	_, err = c.ObjectGet(container, objectName, &buf, true, nil)
+	_, err = c.ObjectGet(container, objectName, &buf, true, nil, true)
 	contents = buf.Bytes()
 	return
 }
@@ -1774,7 +1790,7 @@ func (c *Connection) ObjectGetBytes(container string, objectName string) (conten
 // This is a simplified interface which checks the MD5
 func (c *Connection) ObjectGetString(container string, objectName string) (contents string, err error) {
 	var buf bytes.Buffer
-	_, err = c.ObjectGet(container, objectName, &buf, true, nil)
+	_, err = c.ObjectGet(container, objectName, &buf, true, nil, true)
 	contents = buf.String()
 	return
 }
