@@ -204,7 +204,7 @@ func (d *driver) Writer(ctx context.Context, subPath string, append bool) (stora
 
 // Stat retrieves the FileInfo for the given path, including the current size
 // in bytes and the creation time.
-func (d *driver) Stat(ctx context.Context, subPath string) (storagedriver.FileInfo, error) {
+func (d *driver) Stat(ctx context.Context, subPath string, wantSize bool) (storagedriver.FileInfo, error) {
 	fullPath := d.fullPath(subPath)
 
 	fi, err := os.Stat(fullPath)
@@ -291,8 +291,8 @@ func (d *driver) URLFor(ctx context.Context, path string, options map[string]int
 
 // Walk traverses a filesystem defined within driver, starting
 // from the given path, calling f on each file
-func (d *driver) Walk(ctx context.Context, path string, f storagedriver.WalkFn) error {
-	return storagedriver.WalkFallback(ctx, d, path, f)
+func (d *driver) Walk(ctx context.Context, path string, wantSize bool, f storagedriver.WalkFn) error {
+	return storagedriver.WalkFallback(ctx, d, path, wantSize, f)
 }
 
 // fullPath returns the absolute path of a key within the Driver's storage.

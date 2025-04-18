@@ -21,7 +21,7 @@ type WalkFn func(fileInfo FileInfo) error
 // If the returned error from the WalkFn is ErrSkipDir and fileInfo refers
 // to a directory, the directory will not be entered and Walk
 // will continue the traversal.  If fileInfo refers to a normal file, processing stops
-func WalkFallback(ctx context.Context, driver StorageDriver, from string, f WalkFn) error {
+func WalkFallback(ctx context.Context, driver StorageDriver, from string, wantSize bool, f WalkFn) error {
 	children, err := driver.List(ctx, from)
 	if err != nil {
 		return err
@@ -32,7 +32,7 @@ func WalkFallback(ctx context.Context, driver StorageDriver, from string, f Walk
 		// expensive when running against backends with a slow Stat
 		// implementation, such as s3. This is very likely a serious
 		// performance bottleneck.
-		fileInfo, err := driver.Stat(ctx, child)
+		fileInfo, err := driver.Stat(ctx, child, wantSize)
 		if err != nil {
 			switch err.(type) {
 			case PathNotFoundError:
@@ -45,7 +45,7 @@ func WalkFallback(ctx context.Context, driver StorageDriver, from string, f Walk
 		}
 		err = f(fileInfo)
 		if err == nil && fileInfo.IsDir() {
-			if err := WalkFallback(ctx, driver, child, f); err != nil {
+			if err := WalkFallback(ctx, driver, child, wantSize, f); err != nil {
 				return err
 			}
 		} else if err == ErrSkipDir {

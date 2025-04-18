@@ -63,7 +63,7 @@ type StorageDriver interface {
 
 	// Stat retrieves the FileInfo for the given path, including the current
 	// size in bytes and the creation time.
-	Stat(ctx context.Context, path string) (FileInfo, error)
+	Stat(ctx context.Context, path string, wantSize bool) (FileInfo, error)
 
 	// List returns a list of the objects that are direct descendants of the
 	//given path.
@@ -89,7 +89,7 @@ type StorageDriver interface {
 	// If the returned error from the WalkFn is ErrSkipDir and fileInfo refers
 	// to a directory, the directory will not be entered and Walk
 	// will continue the traversal.  If fileInfo refers to a normal file, processing stops
-	Walk(ctx context.Context, path string, f WalkFn) error
+	Walk(ctx context.Context, path string, wantSize bool, f WalkFn) error
 }
 
 // FileWriter provides an abstraction for an opened writable file-like object in

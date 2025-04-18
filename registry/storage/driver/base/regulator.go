@@ -137,11 +137,11 @@ func (r *regulator) Writer(ctx context.Context, path string, append bool) (stora
 
 // Stat retrieves the FileInfo for the given path, including the current
 // size in bytes and the creation time.
-func (r *regulator) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (r *regulator) Stat(ctx context.Context, path string, wantSize bool) (storagedriver.FileInfo, error) {
 	r.enter()
 	defer r.exit()
 
-	return r.StorageDriver.Stat(ctx, path)
+	return r.StorageDriver.Stat(ctx, path, wantSize)
 }
 
 // List returns a list of the objects that are direct descendants of the

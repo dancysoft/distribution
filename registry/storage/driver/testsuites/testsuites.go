@@ -774,13 +774,13 @@ func (suite *DriverSuite) TestStatCall(c *check.C) {
 	defer suite.deletePath(c, firstPart(dirPath))
 
 	// Call on non-existent file/dir, check error.
-	fi, err := suite.StorageDriver.Stat(suite.ctx, dirPath)
+	fi, err := suite.StorageDriver.Stat(suite.ctx, dirPath, false)
 	c.Assert(err, check.NotNil)
 	c.Assert(err, check.FitsTypeOf, storagedriver.PathNotFoundError{})
 	c.Assert(strings.Contains(err.Error(), suite.Name()), check.Equals, true)
 	c.Assert(fi, check.IsNil)
 
-	fi, err = suite.StorageDriver.Stat(suite.ctx, filePath)
+	fi, err = suite.StorageDriver.Stat(suite.ctx, filePath, false)
 	c.Assert(err, check.NotNil)
 	c.Assert(err, check.FitsTypeOf, storagedriver.PathNotFoundError{})
 	c.Assert(strings.Contains(err.Error(), suite.Name()), check.Equals, true)
@@ -790,7 +790,7 @@ func (suite *DriverSuite) TestStatCall(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	// Call on regular file, check results
-	fi, err = suite.StorageDriver.Stat(suite.ctx, filePath)
+	fi, err = suite.StorageDriver.Stat(suite.ctx, filePath, true)
 	c.Assert(err, check.IsNil)
 	c.Assert(fi, check.NotNil)
 	c.Assert(fi.Path(), check.Equals, filePath)
@@ -803,7 +803,7 @@ func (suite *DriverSuite) TestStatCall(c *check.C) {
 	content = randomContents(4096)
 	err = suite.StorageDriver.PutContent(suite.ctx, filePath, content)
 	c.Assert(err, check.IsNil)
-	fi, err = suite.StorageDriver.Stat(suite.ctx, filePath)
+	fi, err = suite.StorageDriver.Stat(suite.ctx, filePath, false)
 	c.Assert(err, check.IsNil)
 	c.Assert(fi, check.NotNil)
 	time.Sleep(time.Second * 5) // allow changes to propagate (eventual consistency)
@@ -818,7 +818,7 @@ func (suite *DriverSuite) TestStatCall(c *check.C) {
 	}
 
 	// Call on directory (do not check ModTime as dirs don't need to support it)
-	fi, err = suite.StorageDriver.Stat(suite.ctx, dirPath)
+	fi, err = suite.StorageDriver.Stat(suite.ctx, dirPath, true)
 	c.Assert(err, check.IsNil)
 	c.Assert(fi, check.NotNil)
 	c.Assert(fi.Path(), check.Equals, dirPath)

@@ -224,7 +224,7 @@ func (d *driver) Writer(ctx context.Context, path string, append bool) (storaged
 
 // Stat retrieves the FileInfo for the given path, including the current size
 // in bytes and the creation time.
-func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (d *driver) Stat(ctx context.Context, path string, wantSize bool) (storagedriver.FileInfo, error) {
 	blobRef := d.client.GetContainerReference(d.container).GetBlobReference(path)
 	// Check if the path is a blob
 	if ok, err := blobRef.Exists(); err != nil {
@@ -361,8 +361,8 @@ func (d *driver) URLFor(ctx context.Context, path string, options map[string]int
 
 // Walk traverses a filesystem defined within driver, starting
 // from the given path, calling f on each file
-func (d *driver) Walk(ctx context.Context, path string, f storagedriver.WalkFn) error {
-	return storagedriver.WalkFallback(ctx, d, path, f)
+func (d *driver) Walk(ctx context.Context, path string, wantSize bool, f storagedriver.WalkFn) error {
+	return storagedriver.WalkFallback(ctx, d, path, wantSize, f)
 }
 
 // directDescendants will find direct descendants (blobs or virtual containers)

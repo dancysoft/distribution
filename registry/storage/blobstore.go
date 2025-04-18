@@ -93,7 +93,7 @@ func (bs *blobStore) Enumerate(ctx context.Context, ingester func(dgst digest.Di
 		return err
 	}
 
-	return bs.driver.Walk(ctx, specPath, func(fileInfo driver.FileInfo) error {
+	return bs.driver.Walk(ctx, specPath, false, func(fileInfo driver.FileInfo) error {
 		// skip directories
 		if fileInfo.IsDir() {
 			return nil
@@ -170,7 +170,7 @@ func (bs *blobStatter) Stat(ctx context.Context, dgst digest.Digest) (distributi
 		return distribution.Descriptor{}, err
 	}
 
-	fi, err := bs.driver.Stat(ctx, path)
+	fi, err := bs.driver.Stat(ctx, path, true)
 	if err != nil {
 		switch err := err.(type) {
 		case driver.PathNotFoundError:

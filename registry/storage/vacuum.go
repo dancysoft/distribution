@@ -60,7 +60,7 @@ func (v Vacuum) RemoveManifest(name string, dgst digest.Digest, tags []string) e
 			return err
 		}
 
-		_, err = v.driver.Stat(v.ctx, tagsPath)
+		_, err = v.driver.Stat(v.ctx, tagsPath, false)
 		if err != nil {
 			switch err := err.(type) {
 			case driver.PathNotFoundError:

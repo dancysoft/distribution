@@ -609,7 +609,7 @@ func (d *driver) Writer(ctx context.Context, path string, appendParam bool) (sto
 
 // Stat retrieves the FileInfo for the given path, including the current size
 // in bytes and the creation time.
-func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (d *driver) Stat(ctx context.Context, path string, wantSize bool) (storagedriver.FileInfo, error) {
 	resp, err := d.S3.ListObjects(&s3.ListObjectsInput{
 		Bucket:  aws.String(d.Bucket),
 		Prefix:  aws.String(d.s3Path(path)),
@@ -723,7 +723,7 @@ func (d *driver) copy(ctx context.Context, sourcePath string, destPath string) e
 	// Empirically, multipart copy is fastest with 32 MB parts and is faster
 	// than PUT Object - Copy for objects larger than 32 MB.
 
-	fileInfo, err := d.Stat(ctx, sourcePath)
+	fileInfo, err := d.Stat(ctx, sourcePath, true)
 	if err != nil {
 		return parseError(sourcePath, err)
 	}
@@ -915,7 +915,7 @@ func (d *driver) URLFor(ctx context.Context, path string, options map[string]int
 
 // Walk traverses a filesystem defined within driver, starting
 // from the given path, calling f on each file
-func (d *driver) Walk(ctx context.Context, from string, f storagedriver.WalkFn) error {
+func (d *driver) Walk(ctx context.Context, from string, wantSize bool, f storagedriver.WalkFn) error {
 	path := from
 	if !strings.HasSuffix(path, "/") {
 		path = path + "/"

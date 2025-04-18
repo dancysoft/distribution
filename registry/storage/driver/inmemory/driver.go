@@ -151,7 +151,7 @@ func (d *driver) Writer(ctx context.Context, path string, append bool) (storaged
 }
 
 // Stat returns info about the provided path.
-func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (d *driver) Stat(ctx context.Context, path string, wantSize bool) (storagedriver.FileInfo, error) {
 	d.mutex.RLock()
 	defer d.mutex.RUnlock()
 
@@ -246,8 +246,8 @@ func (d *driver) URLFor(ctx context.Context, path string, options map[string]int
 
 // Walk traverses a filesystem defined within driver, starting
 // from the given path, calling f on each file
-func (d *driver) Walk(ctx context.Context, path string, f storagedriver.WalkFn) error {
-	return storagedriver.WalkFallback(ctx, d, path, f)
+func (d *driver) Walk(ctx context.Context, path string, wantSize bool, f storagedriver.WalkFn) error {
+	return storagedriver.WalkFallback(ctx, d, path, wantSize, f)
 }
 
 type writer struct {

@@ -15,7 +15,7 @@ type changingFileSystem struct {
 func (cfs *changingFileSystem) List(ctx context.Context, path string) ([]string, error) {
 	return cfs.fileset, nil
 }
-func (cfs *changingFileSystem) Stat(ctx context.Context, path string) (FileInfo, error) {
+func (cfs *changingFileSystem) Stat(ctx context.Context, path string, wantSize bool) (FileInfo, error) {
 	kept, ok := cfs.keptFiles[path]
 	if ok && kept {
 		return &FileInfoInternal{
@@ -34,7 +34,7 @@ func TestWalkFileRemoved(t *testing.T) {
 		},
 	}
 	infos := []FileInfo{}
-	err := WalkFallback(context.Background(), d, "", func(fileInfo FileInfo) error {
+	err := WalkFallback(context.Background(), d, "", false, func(fileInfo FileInfo) error {
 		infos = append(infos, fileInfo)
 		return nil
 	})

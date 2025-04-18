@@ -151,7 +151,7 @@ func (base *Base) Writer(ctx context.Context, path string, append bool) (storage
 }
 
 // Stat wraps Stat of underlying storage driver.
-func (base *Base) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (base *Base) Stat(ctx context.Context, path string, wantSize bool) (storagedriver.FileInfo, error) {
 	ctx, done := dcontext.WithTrace(ctx)
 	defer done("%s.Stat(%q)", base.Name(), path)
 
@@ -160,7 +160,7 @@ func (base *Base) Stat(ctx context.Context, path string) (storagedriver.FileInfo
 	}
 
 	start := time.Now()
-	fi, e := base.StorageDriver.Stat(ctx, path)
+	fi, e := base.StorageDriver.Stat(ctx, path, wantSize)
 	storageAction.WithValues(base.Name(), "Stat").UpdateSince(start)
 	return fi, base.setDriverName(e)
 }
@@ -228,7 +228,7 @@ func (base *Base) URLFor(ctx context.Context, path string, options map[string]in
 }
 
 // Walk wraps Walk of underlying storage driver.
-func (base *Base) Walk(ctx context.Context, path string, f storagedriver.WalkFn) error {
+func (base *Base) Walk(ctx context.Context, path string, wantSize bool, f storagedriver.WalkFn) error {
 	ctx, done := dcontext.WithTrace(ctx)
 	defer done("%s.Walk(%q)", base.Name(), path)
 
@@ -236,5 +236,5 @@ func (base *Base) Walk(ctx context.Context, path string, f storagedriver.WalkFn)
 		return storagedriver.InvalidPathError{Path: path, DriverName: base.StorageDriver.Name()}
 	}
 
-	return base.setDriverName(base.StorageDriver.Walk(ctx, path, f))
+	return base.setDriverName(base.StorageDriver.Walk(ctx, path, wantSize, f))
 }

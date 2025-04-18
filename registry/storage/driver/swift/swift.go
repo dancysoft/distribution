@@ -352,6 +352,11 @@ func blobIsConsistent(headers swift.Headers, size int64) (bool, error) {
 				// Consistency reached!
 				return true, nil
 			}
+			if size > finalSize {
+				// This should never happen
+				return false, fmt.Errorf("blob size %d is larger than the expected blob size of %d",
+					size, finalSize)
+			}
 		}
 	} else {
 		// Fall back to the original (unsafe) logic which assumes that the DLO is good to go as soon
@@ -482,7 +487,7 @@ func (d *driver) Writer(ctx context.Context, path string, append bool) (storaged
 	return d.newWriter(path, segmentsPath, segments), nil
 }
 
-func (d *driver) getObjectInfo(operation string, path string) (info swift.Object, headers swift.Headers, err error) {
+func (d *driver) getObjectInfo(operation string, path string, needSize bool) (info swift.Object, headers swift.Headers, err error) {
 	sleeper := newSleeper(operation, path, d.ConsistencyTimeout, d.MaxConsistencyPollingInterval)
 
 	for {
@@ -492,6 +497,11 @@ func (d *driver) getObjectInfo(operation string, path string) (info swift.Object
 				return info, headers, storagedriver.PathNotFoundError{Path: path}
 			}
 			return
+		}
+
+		// If object size information is not needed, then we do not have to wait for DLO consistency
+		if !needSize {
+			return info, headers, nil
 		}
 
 		consistent, err := blobIsConsistent(headers, info.Bytes)
@@ -512,7 +522,7 @@ func (d *driver) getObjectInfo(operation string, path string) (info swift.Object
 
 // Stat retrieves the FileInfo for the given path, including the current size
 // in bytes and the creation time.
-func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo, error) {
+func (d *driver) Stat(ctx context.Context, path string, wantSize bool) (storagedriver.FileInfo, error) {
 	swiftPath := d.swiftPath(path)
 	opts := &swift.ObjectsOpts{
 		Prefix:    swiftPath,
@@ -545,7 +555,7 @@ func (d *driver) Stat(ctx context.Context, path string) (storagedriver.FileInfo,
 	//Don't trust an empty `objects` slice. A container listing can be
 	//outdated. For files, we can make a HEAD request on the object which
 	//reports existence (at least) much more reliably.
-	info, _, err := d.getObjectInfo("Stat", swiftPath)
+	info, _, err := d.getObjectInfo("Stat", swiftPath, wantSize)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +594,7 @@ func (d *driver) List(ctx context.Context, path string) ([]string, error) {
 // Move moves an object stored at sourcePath to destPath, removing the original
 // object.
 func (d *driver) Move(ctx context.Context, sourcePath string, destPath string) error {
-	object, headers, err := d.getObjectInfo("Move", d.swiftPath(sourcePath))
+	object, headers, err := d.getObjectInfo("Move", d.swiftPath(sourcePath), true)
 	if err == nil {
 		if manifest, ok := headers["X-Object-Manifest"]; ok {
 			if err = d.createManifest(destPath, manifest, true, object.Bytes); err != nil {
@@ -744,8 +754,8 @@ func (d *driver) URLFor(ctx context.Context, path string, options map[string]int
 
 // Walk traverses a filesystem defined within driver, starting
 // from the given path, calling f on each file
-func (d *driver) Walk(ctx context.Context, path string, f storagedriver.WalkFn) error {
-	return storagedriver.WalkFallback(ctx, d, path, f)
+func (d *driver) Walk(ctx context.Context, path string, wantSize bool, f storagedriver.WalkFn) error {
+	return storagedriver.WalkFallback(ctx, d, path, wantSize, f)
 }
 
 func (d *driver) swiftPath(path string) string {
