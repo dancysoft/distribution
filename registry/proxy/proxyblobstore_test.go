@@ -347,7 +347,7 @@ func testProxyStoreServe(t *testing.T, te *testEnv, numClients int) {
 
 				err = te.store.ServeBlob(te.ctx, w, r, remoteBlob.Digest)
 				if err != nil {
-					t.Errorf(err.Error())
+					t.Errorf("%s", err.Error())
 					return
 				}
 
@@ -392,7 +392,7 @@ func testProxyStoreServe(t *testing.T, te *testEnv, numClients int) {
 
 		err = te.store.ServeBlob(te.ctx, w, r, dr.Digest)
 		if err != nil {
-			t.Fatalf(err.Error())
+			t.Fatalf("%s", err.Error())
 		}
 
 		dl := digest.FromBytes(w.Body.Bytes())

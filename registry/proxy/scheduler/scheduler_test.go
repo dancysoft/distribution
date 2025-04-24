@@ -171,7 +171,7 @@ func TestStopRestore(t *testing.T) {
 
 	err := s.Start()
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatalf("%s", err.Error())
 	}
 	s.add(ref1, 300*timeUnit, entryTypeBlob)
 	s.add(ref2, 100*timeUnit, entryTypeBlob)
